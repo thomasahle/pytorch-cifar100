@@ -164,7 +164,9 @@ if __name__ == "__main__":
 
     run_name = f'{args.net}_lr={args.lr}_warm={args.warm}_opt={args.optimizer}_act={args.activation}'
 
-    net = get_network(args)
+    net = get_network(args.net, args.activation)
+    if args.gpu:
+        net.cuda()
 
     # data preprocessing:
     cifar100_training_loader = get_training_dataloader(
