@@ -36,6 +36,7 @@ from utils import (
 )
 
 
+
 def train(epoch):
 
     start = time.time()
@@ -66,9 +67,9 @@ def train(epoch):
                 )
 
         print(
-            "Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}".format(
+            "Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\t{}".format(
                 loss.item(),
-                optimizer.param_groups[0]["lr"],
+                repr(optimizer),
                 epoch=epoch,
                 trained_samples=batch_index * args.b + len(images),
                 total_samples=len(cifar100_training_loader.dataset),
@@ -142,19 +143,23 @@ def eval_training(epoch=0, tb=True):
 
 if __name__ == "__main__":
 
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-net", type=str, required=True, help="net type")
     parser.add_argument(
         "-gpu", action="store_true", default=False, help="use gpu or not"
     )
     parser.add_argument("-b", type=int, default=128, help="batch size for dataloader")
-    parser.add_argument("-warm", type=int, default=1, help="warm up training phase")
+    parser.add_argument("-warm", type=int, default=0, help="warm up training phase")
     parser.add_argument("-lr", type=float, default=0.1, help="initial learning rate")
     parser.add_argument("-optimizer", type=str, default="sgd", help="optimizer")
     parser.add_argument(
         "-resume", action="store_true", default=False, help="resume training"
     )
     args = parser.parse_args()
+
+    if args.gpu:
+        print('GPUs:', torch.cuda.device_count())
 
     run_name = f'{args.net}_lr={args.lr}_gpu={args.gpu}_b={args.b}_warm={args.warm}_opt={args.optimizer}_resume={args.resume}'
 
@@ -183,7 +188,8 @@ if __name__ == "__main__":
     class OptWrapper(optim.Optimizer):
         def __init__(self, params, opt):
             module = nn.ParameterList(params)
-            self.opt = ModuleWrapper(module) / opt
+            self.inner_opt = opt
+            self.opt = hypopt.ModuleWrapper(module) / opt
             self.opt.initialize()
             self.opt.retain_grad()
 
@@ -192,25 +198,45 @@ if __name__ == "__main__":
             self.opt.adjust()
             self.opt.retain_grad()
 
+        def zero_grad(self):
+            self.opt.zero_grad()
+
+        def __repr__(self):
+            return repr(self.inner_opt)
+
+    class DummyLRScheduler:
+        def step(self, epoch):
+            pass
+
     optargs = dict(lr=args.lr, momentum=.9, weight_decay=5e-4)
+    train_scheduler = DummyLRScheduler()
     if args.optimizer == 'sgd':
         optimizer = optim.SGD( net.parameters(), **optargs)
+        train_scheduler = optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=settings.MILESTONES, gamma=0.2
+        )  # learning rate decay
     elif args.optimizer == 'adam':
         optargs['alpha'] = optargs['lr']
+        del optargs['lr']
         optargs['beta1'] = optargs['momentum']
+        del optargs['momentum']
         optimizer = OptWrapper(net.parameters(), hypopt.FixedAdam(**optargs))
         print("Optimizing with", str(optimizer.opt))
+        train_scheduler = DummyLRScheduler()
     elif args.optimizer == 'adam-adam':
         optargs['alpha'] = optargs['lr']
+        del optargs['lr']
         optargs['beta1'] = optargs['momentum']
+        del optargs['momentum']
         optimizer = OptWrapper(net.parameters(), hypopt.FixedAdam(**optargs) / hypopt.FixedAdam(**optargs))
         print("Optimizing with", str(optimizer.opt))
+        train_scheduler = DummyLRScheduler()
 
-    train_scheduler = optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=settings.MILESTONES, gamma=0.2
-    )  # learning rate decay
     iter_per_epoch = len(cifar100_training_loader)
-    warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
+    if args.warm:
+        warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch)
+    else:
+        warmup_scheduler = DummyLRScheduler()
 
     if args.resume:
         recent_folder = most_recent_folder(
