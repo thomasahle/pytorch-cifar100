@@ -11,6 +11,8 @@
 import torch
 import torch.nn as nn
 
+
+
 cfg = {
     'A' : [64,     'M', 128,      'M', 256, 256,           'M', 512, 512,           'M', 512, 512,           'M'],
     'B' : [64, 64, 'M', 128, 128, 'M', 256, 256,           'M', 512, 512,           'M', 512, 512,           'M'],
@@ -18,18 +20,53 @@ cfg = {
     'E' : [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M']
 }
 
+class CompMul1:
+    def __init__(self, d1, d2):
+        self.fca = nn.Linear(d1, d2)
+        self.fcb = nn.Linear(d1, d2)
+
+    def forward(self, x):
+        return self.fca(x) * self.fcb(x)
+
+
+class CompMul2:
+    def __init__(self, d1, d2):
+        da = (d1+1)//2
+        db = d1//2
+        assert da + db == d1
+        self.fca = nn.Linear(da, d2)
+        self.fca = nn.Linear(db, d2)
+
+    def forward(self, x):
+        a, b = torch.split(x, 2, dim=-1)
+        return self.fca(a) * self.fcb(b)
+
+def linear_act(d1, d2, activation):
+    if activation == 'relu':
+        return nn.Sequential(
+            nn.Linear(d1, d2),
+            nn.ReLU(inplace=True)
+        )
+    elif activation == 'mul1':
+        return CompMul2(d1, d2)
+    elif activation == 'mul2':
+        return CompMul2(d1, d2)
+
+
 class VGG(nn.Module):
 
-    def __init__(self, features, num_class=100):
+    def __init__(self, features, num_class=100, activation='relu'):
         super().__init__()
         self.features = features
 
         self.classifier = nn.Sequential(
-            nn.Linear(512, 4096),
-            nn.ReLU(inplace=True),
+            linear_act(512, 4096, act=activation)
+            #nn.Linear(512, 4096),
+            #nn.ReLU(inplace=True),
             nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
+            linear_act(4096, 4096, act=activation)
+            #nn.Linear(4096, 4096),
+            #nn.ReLU(inplace=True),
             nn.Dropout(),
             nn.Linear(4096, num_class)
         )
