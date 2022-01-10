@@ -155,6 +155,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    run_name = f'{args.name}_lr={args.lr}_gpu={args.gpu}_b={args.b}_warm={args.warm}_opt={args.optimizer}_resume={args.resume}'
+
     net = get_network(args)
 
     # data preprocessing:
@@ -176,25 +178,31 @@ if __name__ == "__main__":
 
     loss_function = nn.CrossEntropyLoss()
 
+
+    class OptWrapper(nn.optim.Optimizer):
+        def __init__(self, params, opt):
+            module = nn.ParameterList(params)
+            self.opt = ModuleWrapper(module) / opt
+            self.opt.initialize()
+            self.opt.retain_grad()
+
+        @torch.no_grad()
+        def step(self):
+            self.opt.adjust()
+            self.opt.retain_grad()
+
     optargs = dict(lr=args.lr, momentum=.9, weight_decay=5e-4)
-    if args.optimizer:
+    if args.optimizer == 'sgd':
         optimizer = optim.SGD( net.parameters(), **optargs)
-    else:
-        class OptWrapper(nn.optim.Optimizer):
-            def __init__(self, params, opt):
-                module = nn.ParameterList(params)
-                self.opt = ModuleWrapper(module) / opt
-                self.opt.initialize()
-                self.opt.retain_grad()
-
-            @torch.no_grad()
-            def step(self):
-                self.opt.adjust()
-                self.opt.retain_grad()
-
+    elif args.optimizer == 'adam':
         optargs['alpha'] = optargs['lr']
         optargs['beta1'] = optargs['momentum']
         optimizer = OptWrapper(net.parameters(), FixedAdam(**optargs))
+        print("Optimizing with", str(optimizer.opt))
+    elif args.optimizer == 'adam-adam':
+        optargs['alpha'] = optargs['lr']
+        optargs['beta1'] = optargs['momentum']
+        optimizer = OptWrapper(net.parameters(), FixedAdam(**optargs) / FixedAdam(**optargs))
         print("Optimizing with", str(optimizer.opt))
 
     train_scheduler = optim.lr_scheduler.MultiStepLR(
@@ -205,18 +213,18 @@ if __name__ == "__main__":
 
     if args.resume:
         recent_folder = most_recent_folder(
-            os.path.join(settings.CHECKPOINT_PATH, args.net), fmt=settings.DATE_FORMAT
+            os.path.join(settings.CHECKPOINT_PATH, run_name), fmt=settings.DATE_FORMAT
         )
         if not recent_folder:
             raise Exception("no recent folder were found")
 
         checkpoint_path = os.path.join(
-            settings.CHECKPOINT_PATH, args.net, recent_folder
+            settings.CHECKPOINT_PATH, run_name, recent_folder
         )
 
     else:
         checkpoint_path = os.path.join(
-            settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW
+            settings.CHECKPOINT_PATH, run_name, settings.TIME_NOW
         )
 
     # use tensorboard
@@ -226,7 +234,7 @@ if __name__ == "__main__":
     # since tensorboard can't overwrite old values
     # so the only way is to create a new tensorboard log
     writer = SummaryWriter(
-        log_dir=os.path.join(settings.LOG_DIR, args.net, settings.TIME_NOW)
+        log_dir=os.path.join(settings.LOG_DIR, run_name, settings.TIME_NOW)
     )
     input_tensor = torch.Tensor(1, 3, 32, 32)
     if args.gpu:
@@ -236,16 +244,16 @@ if __name__ == "__main__":
     # create checkpoint folder to save model
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
-    checkpoint_path = os.path.join(checkpoint_path, "{net}-{epoch}-{type}.pth")
+    checkpoint_path = os.path.join(checkpoint_path, "{run_name}-{epoch}-{type}.pth")
 
     best_acc = 0.0
     if args.resume:
         best_weights = best_acc_weights(
-            os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder)
+            os.path.join(settings.CHECKPOINT_PATH, run_name, recent_folder)
         )
         if best_weights:
             weights_path = os.path.join(
-                settings.CHECKPOINT_PATH, args.net, recent_folder, best_weights
+                settings.CHECKPOINT_PATH, run_name, recent_folder, best_weights
             )
             print("found best acc weights file:{}".format(weights_path))
             print("load best training file to test acc...")
@@ -254,18 +262,18 @@ if __name__ == "__main__":
             print("best acc is {:0.2f}".format(best_acc))
 
         recent_weights_file = most_recent_weights(
-            os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder)
+            os.path.join(settings.CHECKPOINT_PATH, run_name, recent_folder)
         )
         if not recent_weights_file:
             raise Exception("no recent weights file were found")
         weights_path = os.path.join(
-            settings.CHECKPOINT_PATH, args.net, recent_folder, recent_weights_file
+            settings.CHECKPOINT_PATH, run_name, recent_folder, recent_weights_file
         )
         print("loading weights file {} to resume training.....".format(weights_path))
         net.load_state_dict(torch.load(weights_path))
 
         resume_epoch = last_epoch(
-            os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder)
+            os.path.join(settings.CHECKPOINT_PATH, run_name, recent_folder)
         )
 
     for epoch in range(1, settings.EPOCH + 1):
@@ -282,7 +290,7 @@ if __name__ == "__main__":
         # start to save best performance model after learning rate decay to 0.01
         if epoch > settings.MILESTONES[1] and best_acc < acc:
             weights_path = checkpoint_path.format(
-                net=args.net, epoch=epoch, type="best"
+                run_name=run_name, epoch=epoch, type="best"
             )
             print("saving weights file to {}".format(weights_path))
             torch.save(net.state_dict(), weights_path)
@@ -291,7 +299,7 @@ if __name__ == "__main__":
 
         if not epoch % settings.SAVE_EPOCH:
             weights_path = checkpoint_path.format(
-                net=args.net, epoch=epoch, type="regular"
+                run_name=run_name, epoch=epoch, type="regular"
             )
             print("saving weights file to {}".format(weights_path))
             torch.save(net.state_dict(), weights_path)
