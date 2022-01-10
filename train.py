@@ -153,6 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("-warm", type=int, default=0, help="warm up training phase")
     parser.add_argument("-lr", type=float, default=0.1, help="initial learning rate")
     parser.add_argument("-optimizer", type=str, default="sgd", help="optimizer")
+    parser.add_argument("-activation", type=str, default="relu", help="for activation experiments")
     parser.add_argument(
         "-resume", action="store_true", default=False, help="resume training"
     )
@@ -161,7 +162,7 @@ if __name__ == "__main__":
     if args.gpu:
         print('GPUs:', torch.cuda.device_count())
 
-    run_name = f'{args.net}_lr={args.lr}_gpu={args.gpu}_b={args.b}_warm={args.warm}_opt={args.optimizer}_resume={args.resume}'
+    run_name = f'{args.net}_lr={args.lr}_warm={args.warm}_opt={args.optimizer}_act={args.activation}'
 
     net = get_network(args)
 
