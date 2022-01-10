@@ -18,6 +18,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+import hypopt
 
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -155,7 +156,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run_name = f'{args.name}_lr={args.lr}_gpu={args.gpu}_b={args.b}_warm={args.warm}_opt={args.optimizer}_resume={args.resume}'
+    run_name = f'{args.net}_lr={args.lr}_gpu={args.gpu}_b={args.b}_warm={args.warm}_opt={args.optimizer}_resume={args.resume}'
 
     net = get_network(args)
 
@@ -179,7 +180,7 @@ if __name__ == "__main__":
     loss_function = nn.CrossEntropyLoss()
 
 
-    class OptWrapper(nn.optim.Optimizer):
+    class OptWrapper(optim.Optimizer):
         def __init__(self, params, opt):
             module = nn.ParameterList(params)
             self.opt = ModuleWrapper(module) / opt
@@ -197,12 +198,12 @@ if __name__ == "__main__":
     elif args.optimizer == 'adam':
         optargs['alpha'] = optargs['lr']
         optargs['beta1'] = optargs['momentum']
-        optimizer = OptWrapper(net.parameters(), FixedAdam(**optargs))
+        optimizer = OptWrapper(net.parameters(), hypopt.FixedAdam(**optargs))
         print("Optimizing with", str(optimizer.opt))
     elif args.optimizer == 'adam-adam':
         optargs['alpha'] = optargs['lr']
         optargs['beta1'] = optargs['momentum']
-        optimizer = OptWrapper(net.parameters(), FixedAdam(**optargs) / FixedAdam(**optargs))
+        optimizer = OptWrapper(net.parameters(), hypopt.FixedAdam(**optargs) / hypopt.FixedAdam(**optargs))
         print("Optimizing with", str(optimizer.opt))
 
     train_scheduler = optim.lr_scheduler.MultiStepLR(
